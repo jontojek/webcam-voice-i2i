@@ -1,0 +1,7 @@
+faster-whisper
+pyaudio
+numpy
+requests
+pyyaml
+websocket-client
+opencv-python

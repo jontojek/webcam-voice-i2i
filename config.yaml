@@ -1,0 +1,35 @@
+comfyui:
+  host: "http://127.0.0.1:8188"
+  workflow_json: "workflows/optimized_flux2_klein_512_v02.json"
+
+models:
+  checkpoint: "flux-2-klein-4b.safetensors"
+  vae: "full_encoder_small_decoder.safetensors"
+  clip: "qwen_3_4b.safetensors"
+
+whisper:
+  model: "base"          # tiny | base | small | medium | large-v2
+  device: "auto"         # cpu | cuda | auto
+  compute_type: "int8"   # int8 | float16
+
+audio:
+  sample_rate: 16000
+  chunk_duration_ms: 500   # mic read chunk size in ms
+  channels: 1
+  buffer_seconds: 3        # rolling buffer length fed to Whisper
+  transcribe_interval: 1.0 # seconds between Whisper runs — increase on slow CPUs
+  silence_threshold: 0.01  # RMS below this = silence, skip transcription (set 0.0 to disable)
+
+webcam:
+  device_index: 0   # 0 = default camera; try 1, 2... if wrong camera opens
+  width: 512
+  height: 512
+
+display:
+  window_size: 960  # preview window size in pixels (square) -- drag corner to resize freely
+
+nodes:
+  # Match the node IDs from your exported ComfyUI workflow API JSON
+  prompt_node_id: "139"    # CLIPTextEncode (positive prompt)
+  seed_node_id: "136"      # RandomNoise
+  # NOTE: FLUX2 workflow uses ReferenceLatent — there is no denoise parameter

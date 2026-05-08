@@ -1,2 +1,235 @@
-# webcam-voice-i2i
-Input of webcam video gets changed by realtime audio input through very fast image to image ComfyUI
+# 🎙️ Webcam Voice i2i
+
+> **Speak a prompt. See it rendered in real time.**  
+> Your voice drives a live FLUX2 img2img loop in ComfyUI — webcam feed in, AI-styled frames out, updating continuously as you talk.
+
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)
+![ComfyUI](https://img.shields.io/badge/ComfyUI-required-orange)
+![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey?logo=windows)
+![License](https://img.shields.io/badge/License-MIT-green)
+
+---
+
+## ✨ What It Does
+
+| Input | → | Output |
+|---|---|---|
+| 🎤 Your voice | Whisper transcription | Text prompt |
+| 📷 Webcam feed | OpenCV frame capture | Reference image |
+| Both together | FLUX2 in ComfyUI | AI-styled frames at ~3–4 fps |
+
+- **Speak** and the prompt updates live — ComfyUI interrupts the current generation and starts the new one instantly
+- **Stay silent** and it keeps generating with your last spoken prompt
+- **Preview window** pops up automatically showing each generated frame
+
+---
+
+## 🖥️ Requirements
+
+Before you begin, make sure you have:
+
+- [ ] **Windows 10 or 11**
+- [ ] **Python 3.10 or newer** — [download here](https://www.python.org/downloads/) *(check "Add to PATH" during install)*
+- [ ] **ComfyUI** installed and working — [ComfyUI on GitHub](https://github.com/comfyanonymous/ComfyUI)
+- [ ] **FLUX2 Klein workflow** loaded in ComfyUI (`optimized_flux2_klein_512_v02.json`)
+- [ ] **A microphone** plugged in and set as your Windows default mic
+- [ ] **A webcam** plugged in
+
+> 💡 A CUDA GPU is strongly recommended for ComfyUI. Whisper runs fine on CPU.
+
+---
+
+## 🔧 First-Time Setup
+
+*You only need to do this once.*
+
+**1. Clone or download this repo** into a folder on your computer.
+
+**2. Double-click `setup.bat`**
+
+This will:
+- Create a Python virtual environment (`.venv` folder)
+- Install all required packages automatically
+
+That's it. Setup is done.
+
+---
+
+## 🚀 How to Run — Every Single Time
+
+> **Follow this order exactly.** The startup sequence matters.
+
+### Step 1 — Start ComfyUI
+
+Go to your ComfyUI folder and double-click your launcher (usually `run_nvidia_gpu.bat`).
+
+Wait until you see this line in the ComfyUI window:
+```
+To see the GUI go to: http://127.0.0.1:8188
+```
+✅ ComfyUI is ready.
+
+> ⚠️ **Do NOT open Chrome/Edge yet.** Opening the browser lets ComfyUI's WebcamCapture node claim your camera, locking out our Python script.
+
+---
+
+### Step 2 — Double-click `start.bat` in this folder
+
+The script will:
+1. Activate the Python environment automatically
+2. Wait and detect ComfyUI is running (retries every 4 seconds — no need to do anything)
+3. Open your webcam
+4. Load the Whisper voice model
+5. Start generating
+
+You'll see this in the console when everything is live:
+```
+[CAM] Opened device 0 via MSMF
+[INFO] Whisper listening. Speak to drive the prompt.
+>>> PROMPT [0]  'a beautiful scene'
+    pid=ae8a9d2c  node=139  front=False
+```
+A **"ComfyUI Output"** preview window will pop up showing generated frames.
+
+---
+
+### Step 3 — Open your browser (optional, for monitoring)
+
+Once `start.bat` is running and you can see the preview window, you can open Chrome/Edge to `http://127.0.0.1:8188` to watch ComfyUI's queue and gallery.
+
+> ✅ At this point Python already owns the camera, so the browser can't interfere.
+
+---
+
+### Step 4 — Speak!
+
+- **Talk naturally** — Whisper listens continuously and updates the prompt every ~1 second
+- **Silence** = ComfyUI keeps running with the last prompt you spoke
+- **New words** = ComfyUI interrupts instantly and switches to your new prompt
+- The console shows every prompt change:
+  ```
+  >>> PROMPT [42]  'cinematic neon rain, noir city street at night'
+  ```
+
+### Step 5 — Stop
+
+Press **`Ctrl+C`** in the console window. Everything shuts down cleanly.
+
+---
+
+## ⚙️ Configuration
+
+All settings live in **`config.yaml`**. Open it in Notepad to adjust.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `comfyui.host` | `http://127.0.0.1:8188` | Address of your ComfyUI server |
+| `comfyui.workflow_json` | `workflows/...v02.json` | Which workflow file to use |
+| `whisper.model` | `base` | Whisper model size. `tiny` = fastest, `large-v2` = most accurate |
+| `whisper.device` | `auto` | `cuda` for GPU, `cpu` for CPU, `auto` detects |
+| `audio.transcribe_interval` | `1.0` | Seconds between Whisper runs. Raise to `1.5` on slow PCs |
+| `audio.silence_threshold` | `0.01` | Mic level below which Whisper is skipped (reduces false triggers) |
+| `webcam.device_index` | `0` | `0` = default webcam. Try `1` or `2` if the wrong camera opens |
+| `webcam.width` / `height` | `512` | Capture resolution — match your workflow's latent size |
+| `nodes.prompt_node_id` | `139` | Node ID of the CLIPTextEncode (positive prompt) in your workflow |
+
+---
+
+## 🛠️ Troubleshooting
+
+### ❌ `Connection refused at http://127.0.0.1:8188`
+ComfyUI isn't running. Start it first, then `start.bat` will detect it automatically.
+
+---
+
+### ❌ `Cannot open webcam device 0`
+Your camera is locked by another application.
+
+**Fix:** Make sure Chrome/Edge is fully closed before running `start.bat`. Even one browser tab that previously accessed your webcam can hold the OS-level camera lock.
+
+Quick test — run this in your `.venv` to confirm:
+```
+.venv\Scripts\activate
+python -c "import cv2; cap=cv2.VideoCapture(0,cv2.CAP_MSMF); print('OK' if cap.read()[0] else 'LOCKED'); cap.release()"
+```
+If it prints `LOCKED`, close the browser and try again.
+
+If you have multiple cameras, try `device_index: 1` or `2` in `config.yaml`.
+
+---
+
+### ❌ Whisper isn't picking up my voice
+- Check that your microphone is set as the **Windows default recording device** (right-click the speaker icon in taskbar → Sound Settings → Input)
+- Try speaking louder — `silence_threshold: 0.01` filters very quiet audio
+- Set `silence_threshold: 0.0` in `config.yaml` to disable the filter entirely
+
+---
+
+### ❌ Prompts keep changing when I'm not talking (hallucinations)
+Whisper sometimes transcribes background noise or computer sounds.
+
+**Fix:** Increase `silence_threshold` in `config.yaml` (try `0.02` or `0.03`) until idle transcriptions stop.
+
+---
+
+### ❌ Generation is slow / not reaching 3–4 fps
+- Make sure ComfyUI is using your GPU (check its console for `cuda` device messages)
+- The workflow uses only 2 sampler steps — don't increase this
+- Try `whisper.model: tiny` in `config.yaml` to reduce CPU load from transcription
+
+---
+
+### ❌ Preview window doesn't appear
+The output window uses OpenCV. If it doesn't appear, check that `opencv-python` installed correctly:
+```
+.venv\Scripts\activate
+python -c "import cv2; print(cv2.__version__)"
+```
+If that fails, run `setup.bat` again.
+
+---
+
+## 📁 File Overview
+
+```
+webcam-voice-i2i/
+├── start.bat           ← Double-click to run (after ComfyUI is started)
+├── setup.bat           ← One-time install
+├── main.py             ← Main loop: voice + webcam → ComfyUI
+├── audio_capture.py    ← Whisper transcription thread
+├── comfy_client.py     ← ComfyUI REST + WebSocket API client
+├── webcam_grabber.py   ← OpenCV webcam capture
+├── config.yaml         ← All settings (edit this to customize)
+├── requirements.txt    ← Python dependencies
+└── workflows/
+    └── optimized_flux2_klein_512_v02.json   ← ComfyUI workflow (API format)
+```
+
+---
+
+## 🎤 What to Say — Prompt Ideas
+
+Short, punchy phrases work best. Try these to get started:
+
+| Category | Examples |
+|---|---|
+| **Scene** | `the background is on fire` · `everything is underwater` · `inside a blizzard` |
+| **Material** | `I am made of glass` · `I am made of gold` · `I am made of obsidian` |
+| **Lighting** | `only candlelight` · `lit by neon signs` · `moonlight only` |
+| **Style** | `oil painting style` · `charcoal sketch` · `film noir black and white` |
+| **Character** | `I am a skeleton` · `I am a cyborg` · `I am a ghost` |
+| **Combos** | `robot in a burning forest at night` · `I am made of glass inside a thunderstorm` |
+
+📄 **[Full prompt list → PROMPTS.md](PROMPTS.md)** — 100+ phrases organized by category, with tips on what works with this model.
+
+---
+
+## 💡 Tips
+
+- **Best prompts** are short and descriptive: *"oil painting portrait, warm light"* or *"cyberpunk city, neon rain, cinematic"*
+- The **positive prompt node** (139) gets your voice text. The negative prompt (node 140) is empty by default — you can set it manually in `config.yaml` if needed
+- To use a **different workflow**, export it from ComfyUI as API format, drop it in `workflows/`, and update `workflow_json` in `config.yaml`. Also check the node IDs match
+
+---
+
+*Built on [faster-whisper](https://github.com/SYSTRAN/faster-whisper) · [ComfyUI](https://github.com/comfyanonymous/ComfyUI) · [OpenCV](https://opencv.org/)*
