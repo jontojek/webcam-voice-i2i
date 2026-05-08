@@ -24,6 +24,20 @@
 
 ---
 
+## 📺 Video Walkthrough
+
+[![Watch the walkthrough](https://img.youtube.com/vi/AeFrtXBMLLo/maxresdefault.jpg)](https://youtu.be/AeFrtXBMLLo?si=fm9QwUX7XzjwGnF5)
+
+---
+
+## 🎬 See It In Action
+
+> *Saying "I am a demon" live — prompt #2956, generation ~2955 frames in.*
+
+![Live demo — webcam voice i2i running with FLUX2. Console on the left shows the rolling prompt history; the preview window on the right shows the current generated frame.](cam_vox_i2i_02.jpg)
+
+---
+
 ## 🖥️ Requirements
 
 Before you begin, make sure you have:
@@ -59,6 +73,16 @@ That's it. Setup is done.
 
 > **Follow this order exactly.** The startup sequence matters.
 
+### Step 0 — Kill any stale Python processes (if needed)
+
+If the script previously crashed or was force-closed, a `python.exe` process may still be holding the camera. Run this in PowerShell before starting:
+
+```powershell
+Get-Process python* | Stop-Process -Force
+```
+
+---
+
 ### Step 1 — Start ComfyUI
 
 Go to your ComfyUI folder and double-click your launcher (usually `run_nvidia_gpu.bat`).
@@ -69,7 +93,7 @@ To see the GUI go to: http://127.0.0.1:8188
 ```
 ✅ ComfyUI is ready.
 
-> ⚠️ **Do NOT open Chrome/Edge yet.** Opening the browser lets ComfyUI's WebcamCapture node claim your camera, locking out our Python script.
+> ⚠️ **ComfyUI's launcher automatically opens Chrome.  Close that browser window immediately** — before running `start.bat`.  If Chrome stays open, its WebcamCapture node will grab the camera first and lock out the Python script.
 
 ---
 
@@ -103,9 +127,9 @@ Once `start.bat` is running and you can see the preview window, you can open Chr
 
 ### Step 4 — Speak!
 
-- **Talk naturally** — Whisper listens continuously and updates the prompt every ~1 second
+- **Talk naturally** — Whisper listens continuously and transcribes every ~1.5 seconds
 - **Silence** = ComfyUI keeps running with the last prompt you spoke
-- **New words** = ComfyUI interrupts instantly and switches to your new prompt
+- **New words** = finish your phrase and hold still for ~1.5 seconds — ComfyUI will interrupt and switch to your new prompt once the text has stabilised
 - The console shows every prompt change:
   ```
   >>> PROMPT [42]  'cinematic neon rain, noir city street at night'
@@ -119,7 +143,7 @@ Press **`Ctrl+C`** in the console window. Everything shuts down cleanly.
 
 ## ⚙️ Configuration
 
-All settings live in **`config.yaml`**. Open it in Notepad to adjust.
+All settings live in **`config.yaml`**. Open it in Notepad, change the numbers, save the file, then restart `start.bat` — it reads the config fresh on every launch.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -127,7 +151,8 @@ All settings live in **`config.yaml`**. Open it in Notepad to adjust.
 | `comfyui.workflow_json` | `workflows/...v02.json` | Which workflow file to use |
 | `whisper.model` | `base` | Whisper model size. `tiny` = fastest, `large-v2` = most accurate |
 | `whisper.device` | `auto` | `cuda` for GPU, `cpu` for CPU, `auto` detects |
-| `audio.transcribe_interval` | `1.0` | Seconds between Whisper runs. Raise to `1.5` on slow PCs |
+| `audio.transcribe_interval` | `1.5` | Seconds between Whisper runs. Raise if phrases still get cut short |
+| `audio.voice_change_debounce` | `1.5` | Seconds the transcribed text must be stable before a new prompt fires. Raise if mid-phrase words are triggering generations too early |
 | `audio.silence_threshold` | `0.01` | Mic level below which Whisper is skipped (reduces false triggers) |
 | `webcam.device_index` | `0` | `0` = default webcam. Try `1` or `2` if the wrong camera opens |
 | `webcam.width` / `height` | `512` | Capture resolution — match your workflow's latent size |
@@ -145,14 +170,19 @@ ComfyUI isn't running. Start it first, then `start.bat` will detect it automatic
 ### ❌ `Cannot open webcam device 0`
 Your camera is locked by another application.
 
-**Fix:** Make sure Chrome/Edge is fully closed before running `start.bat`. Even one browser tab that previously accessed your webcam can hold the OS-level camera lock.
+**Most likely cause:** ComfyUI's launcher auto-opens Chrome, which grabs the camera. Close that browser window right after ComfyUI starts, before running `start.bat`.
 
-Quick test — run this in your `.venv` to confirm:
+**If a previous run crashed**, a stale `python.exe` may still hold the lock. Kill it:
+```powershell
+Get-Process python* | Stop-Process -Force
+```
+
+Quick test — run this in your `.venv` to confirm the camera is free:
 ```
 .venv\Scripts\activate
 python -c "import cv2; cap=cv2.VideoCapture(0,cv2.CAP_MSMF); print('OK' if cap.read()[0] else 'LOCKED'); cap.release()"
 ```
-If it prints `LOCKED`, close the browser and try again.
+If it prints `LOCKED`, close the browser (or kill python) and try again.
 
 If you have multiple cameras, try `device_index: 1` or `2` in `config.yaml`.
 
@@ -162,6 +192,15 @@ If you have multiple cameras, try `device_index: 1` or `2` in `config.yaml`.
 - Check that your microphone is set as the **Windows default recording device** (right-click the speaker icon in taskbar → Sound Settings → Input)
 - Try speaking louder — `silence_threshold: 0.01` filters very quiet audio
 - Set `silence_threshold: 0.0` in `config.yaml` to disable the filter entirely
+
+---
+
+### ❌ Prompt only captures the first 2–3 words of a phrase
+Whisper fires mid-sentence and the partial transcript gets committed before you finish speaking.
+
+**Fix:** Raise `voice_change_debounce` in `config.yaml` (try `2.0` or `2.5`). This is how long the transcribed text must hold steady before it triggers a new generation — longer values give you more time to complete a phrase.
+
+You can also raise `transcribe_interval` (try `2.0`) so Whisper waits longer between runs and captures more of your phrase in one pass.
 
 ---
 
@@ -201,6 +240,7 @@ webcam-voice-i2i/
 ├── webcam_grabber.py   ← OpenCV webcam capture
 ├── config.yaml         ← All settings (edit this to customize)
 ├── requirements.txt    ← Python dependencies
+├── cam_vox_i2i_02.jpg  ← Demo screenshot (README)
 └── workflows/
     └── optimized_flux2_klein_512_v02.json   ← ComfyUI workflow (API format)
 ```

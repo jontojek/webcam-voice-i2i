@@ -17,7 +17,8 @@ audio:
   chunk_duration_ms: 500   # mic read chunk size in ms
   channels: 1
   buffer_seconds: 3        # rolling buffer length fed to Whisper
-  transcribe_interval: 1.0 # seconds between Whisper runs — increase on slow CPUs
+  transcribe_interval: 1.5  # seconds between Whisper runs — increase if phrases get cut short
+  voice_change_debounce: 1.5 # seconds the transcribed text must be stable before queuing a new prompt
   silence_threshold: 0.01  # RMS below this = silence, skip transcription (set 0.0 to disable)
 
 webcam:

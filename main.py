@@ -114,7 +114,7 @@ def show_image(window_name: str, img_bytes: bytes) -> None:
 # --------------------------------------------------------------------------- #
 # Generation loop
 # --------------------------------------------------------------------------- #
-def run_generation_loop(client, workflow, webcam, transcriber, nodes_cfg, display_size, shutdown_event):
+def run_generation_loop(client, workflow, webcam, transcriber, nodes_cfg, display_size, voice_debounce, shutdown_event):
     client_id   = str(uuid.uuid4())
     node_id     = str(nodes_cfg.get("prompt_node_id", "139"))
     PREVIEW_WIN = "ComfyUI Output"
@@ -123,10 +123,15 @@ def run_generation_loop(client, workflow, webcam, transcriber, nodes_cfg, displa
     init_preview_window(PREVIEW_WIN, display_size)
 
     state = {
-        "last_prompt":     None,
-        "current_pid":     None,
-        "gen_count":       0,
-        "last_queue_time": 0.0,
+        "last_prompt":      None,
+        "current_pid":      None,
+        "gen_count":        0,
+        "last_queue_time":  0.0,
+        # Stability debounce: track when the transcribed text last changed.
+        # A new prompt is only queued once the text has held steady for
+        # `voice_debounce` seconds, so partial phrases mid-sentence are ignored.
+        "pending_text":     None,
+        "pending_since":    0.0,
     }
 
     def get_voice_text():
@@ -201,10 +206,20 @@ def run_generation_loop(client, workflow, webcam, transcriber, nodes_cfg, displa
         # Keep the cv2 preview window alive
         cv2.waitKey(1)
 
-        # Voice-change check (debounced 300 ms)
-        latest  = get_voice_text()
-        elapsed = time.time() - state["last_queue_time"]
-        if latest != state["last_prompt"] and elapsed > 0.3:
+        # Voice stability debounce:
+        # When Whisper produces new text we record it as "pending".  We only
+        # interrupt and queue once that exact text has been stable (unchanged)
+        # for `voice_debounce` seconds.  This prevents partial mid-phrase
+        # transcriptions from firing prematurely.
+        latest = get_voice_text()
+        now    = time.time()
+        if latest != state["pending_text"]:
+            # Text just changed -- start the stability clock
+            state["pending_text"]  = latest
+            state["pending_since"] = now
+        elif (latest != state["last_prompt"]
+              and (now - state["pending_since"]) >= voice_debounce):
+            # Same text, held for the full debounce window -- commit it
             client.interrupt()
             queue(latest, front=True)
             continue
@@ -321,14 +336,16 @@ def main():
         chunk_duration_ms   = audio_cfg.get("chunk_duration_ms", 500),
         channels            = audio_cfg.get("channels", 1),
         buffer_seconds      = audio_cfg.get("buffer_seconds", 3),
-        transcribe_interval = audio_cfg.get("transcribe_interval", 1.0),
+        transcribe_interval = audio_cfg.get("transcribe_interval", 1.5),
         silence_threshold   = audio_cfg.get("silence_threshold", 0.01),
     )
     transcriber.start()
     print(f"{C.INFO}[INFO] Whisper listening. Speak to drive the prompt.{C.RESET}\n")
 
+    voice_debounce = audio_cfg.get("voice_change_debounce", 1.5)
+
     # Run generation loop (blocks until Ctrl+C)
-    run_generation_loop(client, workflow, webcam, transcriber, nodes_cfg, display_size, _shutdown_event)
+    run_generation_loop(client, workflow, webcam, transcriber, nodes_cfg, display_size, voice_debounce, _shutdown_event)
 
     # Shutdown
     webcam.release()
