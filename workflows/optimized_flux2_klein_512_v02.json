@@ -167,7 +167,7 @@
         0
       ],
       "latent": [
-        "146",
+        "154",
         0
       ]
     },
@@ -189,7 +189,7 @@
     },
     "class_type": "VAEEncode",
     "_meta": {
-      "title": "VAE Encode"
+      "title": "VAE Encode (current webcam frame)"
     }
   },
   "147": {
@@ -199,7 +199,7 @@
         0
       ],
       "latent": [
-        "146",
+        "154",
         0
       ]
     },
@@ -218,6 +218,49 @@
     "class_type": "WebcamCapture",
     "_meta": {
       "title": "Webcam Capture"
+    }
+  },
+  "152": {
+    "inputs": {
+      "image": "comfy_live_prevout.png",
+      "upload": "image"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Previous Output Frame (temporal feedback)"
+    }
+  },
+  "153": {
+    "inputs": {
+      "pixels": [
+        "152",
+        0
+      ],
+      "vae": [
+        "141",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode (previous output)"
+    }
+  },
+  "154": {
+    "inputs": {
+      "samples1": [
+        "146",
+        0
+      ],
+      "samples2": [
+        "153",
+        0
+      ],
+      "blend_factor": 0.15
+    },
+    "class_type": "LatentBlend",
+    "_meta": {
+      "title": "Temporal Feedback Blend (samples2 weight = feedback strength)"
     }
   },
   "151": {

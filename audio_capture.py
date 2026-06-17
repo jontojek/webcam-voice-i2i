@@ -2,13 +2,32 @@
 
 Architecture
 ------------
-Two threads share a rolling deque:
+Two threads:
 
-  _reader_thread  -- reads mic chunks continuously into _audio_buffer (never blocks on Whisper)
-  run() loop      -- wakes every `transcribe_interval` seconds, snapshots the buffer,
-                     checks RMS energy (skips silence), then runs Whisper
+  _reader_thread  -- reads mic chunks continuously and classifies each chunk as
+                     speech/silence by its own RMS (never blocks on Whisper)
+  run() loop      -- a small state machine that accumulates chunks while speech
+                     is happening and fires one Whisper call per *completed
+                     utterance* (triggered by a real pause), instead of polling
+                     a fixed-size ring buffer on a timer.
 
-This prevents Whisper from starving the mic read loop and dropping audio chunks.
+Why the rewrite
+----------------
+The previous version snapshotted a fixed 3s ring buffer every `transcribe_interval`
+seconds and computed RMS over the *whole* window before deciding whether to skip
+it as silence. Two bugs fell out of that:
+
+  1. RMS-over-whole-window dilution -- a short, quiet-ish phrase surrounded by
+     silence inside the same 3s window could average below `silence_threshold`
+     and get skipped entirely, leaving `_latest_text` stale ("stuck").
+  2. main.py's debounce required the *exact same string* to come back from two
+     independent Whisper calls on overlapping, sliding windows 1.5s apart.
+     Word-boundary drift between calls meant that rarely happened, so new
+     prompts often never committed.
+
+This version fixes both by detecting actual utterance boundaries (speech onset
+/ pause) per-chunk, transcribing only complete utterances, and exposing a
+monotonic sequence number so callers don't need string-equality at all.
 """
 
 import threading
@@ -21,7 +40,7 @@ from faster_whisper import WhisperModel
 
 
 class AudioTranscriber(threading.Thread):
-    """Rolling-buffer transcriber.  Call get_latest_text() from any thread."""
+    """Utterance-segmented transcriber. Call get_update() from any thread."""
 
     def __init__(
         self,
@@ -31,22 +50,29 @@ class AudioTranscriber(threading.Thread):
         sample_rate=16000,
         chunk_duration_ms=500,
         channels=1,
-        buffer_seconds=3,
-        transcribe_interval=1.0,
+        buffer_seconds=3,            # kept for config compat; no longer a hard window
+        transcribe_interval=1.5,     # unused by the new loop; kept for config compat
         silence_threshold=0.01,
+        min_silence_ms=600,          # pause length that ends an utterance
+        min_speech_ms=150,           # speech length required to start an utterance
+        max_utterance_ms=8000,       # force-flush long monologues so prompts still update
     ):
         super().__init__(daemon=True)
         self.sample_rate = sample_rate
         self.channels = channels
         self.chunk_samples = int(sample_rate * chunk_duration_ms / 1000)
-        self.buffer_samples = int(sample_rate * buffer_seconds)
-        self.transcribe_interval = transcribe_interval
+        self.chunk_duration_ms = chunk_duration_ms
         self.silence_threshold = silence_threshold
 
-        # Thread-safe rolling audio buffer
-        self._audio_buffer = deque(maxlen=self.buffer_samples)
+        self.min_speech_chunks = max(1, round(min_speech_ms / chunk_duration_ms))
+        self.min_silence_chunks = max(1, round(min_silence_ms / chunk_duration_ms))
+        self.max_utterance_chunks = max(1, round(max_utterance_ms / chunk_duration_ms))
+
+        # Thread-safe handoff: reader thread classifies+queues chunks, run() consumes them.
+        self._chunk_queue = deque()
         self._lock = threading.Lock()
         self._latest_text = ""
+        self._utterance_seq = 0
         self._stop_event = threading.Event()
 
         # Load Whisper once at startup
@@ -75,43 +101,88 @@ class AudioTranscriber(threading.Thread):
                 time.sleep(0.05)
                 continue
             samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+            rms = float(np.sqrt(np.mean(samples ** 2))) if samples.size else 0.0
             with self._lock:
-                self._audio_buffer.extend(samples)
+                self._chunk_queue.append((samples, rms))
 
     # -------------------------------------------------------------------- #
-    # Main thread: transcription loop
+    # Main thread: utterance segmentation + transcription
     # -------------------------------------------------------------------- #
     def run(self):
         reader = threading.Thread(target=self._reader_thread, daemon=True, name="mic-reader")
         reader.start()
 
+        in_utterance = False
+        utterance_chunks = []      # list of np.float32 chunk arrays for the current utterance
+        speech_run = 0
+        silence_run = 0
+        preroll = deque(maxlen=1)  # last silent chunk, prepended on speech onset to avoid clipping
+
         while not self._stop_event.is_set():
-            time.sleep(self.transcribe_interval)
-
-            # Snapshot buffer under lock, then release before calling Whisper
             with self._lock:
-                if len(self._audio_buffer) < self.chunk_samples:
-                    continue
-                audio_seg = np.array(self._audio_buffer, dtype=np.float32)
+                if not self._chunk_queue:
+                    item = None
+                else:
+                    item = self._chunk_queue.popleft()
 
-            # Skip silence -- saves CPU and avoids Whisper hallucinations on dead air
-            rms = float(np.sqrt(np.mean(audio_seg ** 2)))
-            if rms < self.silence_threshold:
+            if item is None:
+                time.sleep(0.01)
                 continue
 
-            segments, _ = self._whisper.transcribe(
-                audio_seg,
-                beam_size=1,
-                best_of=1,
-                temperature=0.0,
-                condition_on_previous_text=False,
-            )
-            text = " ".join(s.text.strip() for s in segments).strip()
-            if text:
-                with self._lock:
-                    self._latest_text = text
+            samples, rms = item
+            is_speech = rms >= self.silence_threshold
+
+            if not in_utterance:
+                preroll.append(samples)
+                if is_speech:
+                    speech_run += 1
+                    if speech_run >= self.min_speech_chunks:
+                        # Speech onset confirmed -- start utterance, include pre-roll chunk
+                        in_utterance = True
+                        utterance_chunks = list(preroll) if len(preroll) else []
+                        if not utterance_chunks or utterance_chunks[-1] is not samples:
+                            utterance_chunks.append(samples)
+                        silence_run = 0
+                else:
+                    speech_run = 0
+                continue
+
+            # -- in utterance --
+            utterance_chunks.append(samples)
+            if is_speech:
+                silence_run = 0
+            else:
+                silence_run += 1
+
+            force_flush = len(utterance_chunks) >= self.max_utterance_chunks
+            if silence_run >= self.min_silence_chunks or force_flush:
+                self._finalize_utterance(utterance_chunks)
+                in_utterance = False
+                utterance_chunks = []
+                speech_run = 0
+                silence_run = 0
+                preroll.clear()
 
         reader.join(timeout=1.0)
+
+    def _finalize_utterance(self, chunks):
+        audio_seg = np.concatenate(chunks) if chunks else np.array([], dtype=np.float32)
+        if audio_seg.size < self.chunk_samples // 2:
+            return  # too short to be real speech
+
+        segments, _ = self._whisper.transcribe(
+            audio_seg,
+            beam_size=1,
+            best_of=1,
+            temperature=0.0,
+            condition_on_previous_text=False,
+            vad_filter=True,
+        )
+        text = " ".join(s.text.strip() for s in segments).strip()
+        if text:
+            with self._lock:
+                self._latest_text = text
+                self._utterance_seq += 1
 
     # -------------------------------------------------------------------- #
     # Public API
@@ -119,6 +190,13 @@ class AudioTranscriber(threading.Thread):
     def get_latest_text(self):
         with self._lock:
             return self._latest_text
+
+    def get_update(self):
+        """Returns (utterance_seq, text). seq increments once per *completed*
+        utterance, so callers can detect a new spoken phrase without needing
+        the text to match exactly across calls."""
+        with self._lock:
+            return self._utterance_seq, self._latest_text
 
     def stop(self):
         self._stop_event.set()

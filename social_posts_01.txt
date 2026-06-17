@@ -1,0 +1,2 @@
+Real-time voice → img2img pipeline. Whisper transcribes your mic, feeds live verbal prompts to FLUX2-klein via ComfyUI, webcam realtime image feed transforms at ~3fps. No buttons. Just speaking the images into existence.  Code/details avail on Github. 
+https://youtu.be/AeFrtXBMLLo?si=6Q3CPxm7b5SDyRnQ

@@ -16,10 +16,12 @@ audio:
   sample_rate: 16000
   chunk_duration_ms: 500   # mic read chunk size in ms
   channels: 1
-  buffer_seconds: 3        # rolling buffer length fed to Whisper
-  transcribe_interval: 1.5  # seconds between Whisper runs — increase if phrases get cut short
-  voice_change_debounce: 1.5 # seconds the transcribed text must be stable before queuing a new prompt
-  silence_threshold: 0.01  # RMS below this = silence, skip transcription (set 0.0 to disable)
+  buffer_seconds: 3        # legacy/unused, kept for back-compat with old configs
+  transcribe_interval: 1.5 # legacy/unused, kept for back-compat with old configs
+  silence_threshold: 0.01  # RMS below this = silence, per-chunk (set 0.0 to disable)
+  min_silence_ms: 600      # pause length (ms) that ends an utterance and triggers transcription
+  min_speech_ms: 150       # speech length (ms) required to confirm an utterance has started
+  max_utterance_ms: 8000   # force-flush long monologues so the prompt still updates
 
 webcam:
   device_index: 0   # 0 = default camera; try 1, 2... if wrong camera opens
@@ -27,10 +29,27 @@ webcam:
   height: 512
 
 display:
-  window_size: 960  # preview window size in pixels (square) -- drag corner to resize freely
+  window_size: 960   # preview window size in pixels (square) -- drag corner to resize freely
+  interpolate: true   # OpenCV optical-flow midframe shown between real outputs, smooths perceived fps
+
+feedback:
+  enabled: true    # blend each new frame's latent with the previous output's latent (node 154)
+  strength: 0.7    # starting blend_factor on launch -- weight on the LIVE webcam frame.
+                    # 1.0 = pure live frame, no memory. 0.0 = ignore the live frame entirely
+                    # (max ghosting / self-looping on the previous output). Tune live in the
+                    # preview window with [ (more ghosting) / ] (more live) / 0 / 1 shortcuts
+                    # once start.bat is running.
+  step: 0.02       # how much each [ / ] keypress changes the strength
+
+prompting:
+  # {phrase} is replaced with whatever Whisper transcribes. Customize this to bias every
+  # prompt toward FLUX.2 Klein's editing-specific style (see PROMPTS.md) without having to
+  # say it out loud every time.
+  template: "{phrase}"
 
 nodes:
   # Match the node IDs from your exported ComfyUI workflow API JSON
-  prompt_node_id: "139"    # CLIPTextEncode (positive prompt)
-  seed_node_id: "136"      # RandomNoise
+  prompt_node_id: "139"     # CLIPTextEncode (positive prompt)
+  seed_node_id: "136"       # RandomNoise
+  feedback_node_id: "154"   # LatentBlend (temporal feedback)
   # NOTE: FLUX2 workflow uses ReferenceLatent — there is no denoise parameter

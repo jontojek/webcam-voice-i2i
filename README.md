@@ -110,10 +110,16 @@ You'll see this in the console when everything is live:
 ```
 [CAM] Opened device 0 via MSMF
 [INFO] Whisper listening. Speak to drive the prompt.
->>> PROMPT [0]  'a beautiful scene'
+[INFO] Feedback strength: 0.700  (press [ for more memory/ghosting, ] for more live/responsive, 1 = fully live, 0 = max ghosting)
+>>> PROMPT [0]  'The Easter Bunny'
     pid=ae8a9d2c  node=139  front=False
 ```
 A **"ComfyUI Output"** preview window will pop up showing generated frames.
+
+> 🎛️ **Tune temporal feedback live** — click the preview window so it has focus, then press
+> `[` / `]` to lower/raise feedback strength, `1` to jump to fully live (no memory), or `0` to
+> jump to maximum ghosting. See [Temporal Feedback](#-temporal-feedback) below for what this
+> actually controls.
 
 ---
 
@@ -127,9 +133,9 @@ Once `start.bat` is running and you can see the preview window, you can open Chr
 
 ### Step 4 — Speak!
 
-- **Talk naturally** — Whisper listens continuously and transcribes every ~1.5 seconds
+- **Talk naturally** — speech is detected continuously, chunk by chunk
 - **Silence** = ComfyUI keeps running with the last prompt you spoke
-- **New words** = finish your phrase and hold still for ~1.5 seconds — ComfyUI will interrupt and switch to your new prompt once the text has stabilised
+- **New words** = finish your phrase and pause briefly (~0.6s by default) — that pause marks the utterance as complete, and ComfyUI interrupts and switches to your new prompt immediately
 - The console shows every prompt change:
   ```
   >>> PROMPT [42]  'cinematic neon rain, noir city street at night'
@@ -151,12 +157,38 @@ All settings live in **`config.yaml`**. Open it in Notepad, change the numbers, 
 | `comfyui.workflow_json` | `workflows/...v02.json` | Which workflow file to use |
 | `whisper.model` | `base` | Whisper model size. `tiny` = fastest, `large-v2` = most accurate |
 | `whisper.device` | `auto` | `cuda` for GPU, `cpu` for CPU, `auto` detects |
-| `audio.transcribe_interval` | `1.5` | Seconds between Whisper runs. Raise if phrases still get cut short |
-| `audio.voice_change_debounce` | `1.5` | Seconds the transcribed text must be stable before a new prompt fires. Raise if mid-phrase words are triggering generations too early |
-| `audio.silence_threshold` | `0.01` | Mic level below which Whisper is skipped (reduces false triggers) |
+| `audio.silence_threshold` | `0.01` | Per-chunk RMS below this = silence. Raise if idle noise triggers false speech, lower (even `0.0`) if quiet speech gets missed |
+| `audio.min_speech_ms` | `150` | How much continuous speech is required before an utterance is considered "started" |
+| `audio.min_silence_ms` | `600` | How long a pause must last before an utterance is considered finished and sent for transcription |
+| `audio.max_utterance_ms` | `8000` | Force-flushes long monologues so the prompt still updates even if you don't pause |
 | `webcam.device_index` | `0` | `0` = default webcam. Try `1` or `2` if the wrong camera opens |
 | `webcam.width` / `height` | `512` | Capture resolution — match your workflow's latent size |
+| `display.interpolate` | `true` | Inserts an OpenCV optical-flow midframe between real outputs to smooth perceived fps |
+| `feedback.enabled` | `true` | Turns the temporal feedback loop on/off (see below) |
+| `feedback.strength` | `0.7` | Starting `blend_factor` — weight on the live webcam frame. See [Temporal Feedback](#-temporal-feedback) |
+| `feedback.step` | `0.02` | How much each `[` / `]` keypress changes the strength while running |
 | `nodes.prompt_node_id` | `139` | Node ID of the CLIPTextEncode (positive prompt) in your workflow |
+| `nodes.feedback_node_id` | `154` | Node ID of the LatentBlend node used for temporal feedback |
+
+---
+
+## 🌀 Temporal Feedback
+
+Each new frame's latent is blended with the *previous output's* latent (ComfyUI node 154,
+`LatentBlend`) before decoding. This is what gives the output frame-to-frame stability instead
+of every frame looking like an unrelated re-roll.
+
+`feedback.strength` (the node's `blend_factor`) is the weight on the **current/live** webcam
+frame:
+
+- **`1.0`** — pure live frame, no memory at all (every frame independent)
+- **`0.7`** (default) — mostly live, a bit of carry-over for stability
+- **`0.0`** — ignores the live frame entirely; loops on the previous output (maximum ghosting)
+
+Lower values trade responsiveness for smoothness; if it feels "over-baked" or laggy behind your
+movement, raise the strength. If frames feel too flickery/independent, lower it. Tune it live
+with `[` / `]` / `0` / `1` in the preview window — no restart needed, changes apply to the very
+next frame.
 
 ---
 
@@ -196,11 +228,14 @@ If you have multiple cameras, try `device_index: 1` or `2` in `config.yaml`.
 ---
 
 ### ❌ Prompt only captures the first 2–3 words of a phrase
-Whisper fires mid-sentence and the partial transcript gets committed before you finish speaking.
+Whisper is committing the utterance before you've finished speaking — usually because a short
+natural pause mid-sentence is being read as the end of speech.
 
-**Fix:** Raise `voice_change_debounce` in `config.yaml` (try `2.0` or `2.5`). This is how long the transcribed text must hold steady before it triggers a new generation — longer values give you more time to complete a phrase.
+**Fix:** Raise `min_silence_ms` in `config.yaml` (try `900` or `1200`). This is how long a pause
+must last before your utterance is considered finished and sent to Whisper — longer values give
+you more room for mid-sentence breaths.
 
-You can also raise `transcribe_interval` (try `2.0`) so Whisper waits longer between runs and captures more of your phrase in one pass.
+If long phrases get cut off instead, raise `max_utterance_ms` (try `12000`).
 
 ---
 

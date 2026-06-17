@@ -16,6 +16,42 @@ Speak clearly, let the phrase land, then try the next one.
 
 ---
 
+## Why short phrases work (FLUX.2 Klein editing model)
+
+FLUX.2 Klein doesn't denoise a noised copy of your webcam frame — it holds the frame as a
+fixed **reference** (via `ReferenceLatent`) and edits from an empty latent guided by your
+text. Per [BFL's single-reference editing guide](https://docs.bfl.ai/guides/prompting_editing_single_reference),
+the model responds best to instructions that are:
+
+- **Specific about what changes** — `"the shirt is gold"` edits more reliably than `"make it cooler"`
+- **Implicitly preserving everything else** — since there's no noise schedule pulling toward
+  the original, anything you don't mention tends to stay put; you rarely need to say "keep the
+  face the same," but if a generation drifts, naming the thing to preserve helps
+  (`"red jacket, same face and background"`)
+- **Imperative/declarative, not conversational** — `"covered in moss"` beats `"can you make me
+  look like I'm covered in moss?"` — fewer tokens for Whisper to mis-transcribe and for the
+  model to parse as instruction rather than content
+
+This is also why this repo's phrase library skews toward `I am...` / `everything is...` /
+single material or lighting words — they map cleanly onto "change X" without ambiguity about
+what's supposed to hold still.
+
+### Auto-wrapping phrases with `prompting.template`
+
+`config.yaml` has a `prompting.template` key (default `"{phrase}"` — passes your spoken words
+through unchanged). If you find yourself repeating the same BFL-style qualifier every time
+("...same face, same pose"), bake it into the template instead of saying it out loud:
+
+```yaml
+prompting:
+  template: "{phrase}, keep the same face and pose, photorealistic"
+```
+
+Every transcribed phrase gets substituted into `{phrase}` before being sent to ComfyUI, so the
+spoken prompt stays short while the sent prompt carries the extra editing-specific guidance.
+
+---
+
 ## Scene / Environment
 
 ```
